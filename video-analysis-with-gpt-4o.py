@@ -26,12 +26,14 @@ load_dotenv(override=True)
 # Configuration of OpenAI GPT-4o
 aoai_endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
 aoai_apikey = os.environ["AZURE_OPENAI_API_KEY"]
+aoai_apiversion = os.environ["AZURE_OPENAI_API_VERSION"]
 aoai_model_name = os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"]
+system_prompt = os.environ.get("SYSTEM_PROMPT", "You are an expert on Video Analysis. You will be shown a series of images from a video. Describe what is happening in the video, including the objects, actions, and any other relevant details. Be as specific and detailed as possible.")
 print(f'aoai_endpoint: {aoai_endpoint}, aoai_model_name: {aoai_model_name}')
 # Create AOAI client for answer generation
 aoai_client = AzureOpenAI(
     azure_deployment=aoai_model_name,
-    api_version='2024-10-01-preview', #'2024-02-15-preview',
+    api_version=aoai_apiversion, #'2024-02-15-preview',
     azure_endpoint=aoai_endpoint,
     api_key=aoai_apikey
 )
@@ -39,10 +41,11 @@ aoai_client = AzureOpenAI(
 # Configuration of Whisper
 whisper_endpoint = os.environ["WHISPER_ENDPOINT"]
 whisper_apikey = os.environ["WHISPER_API_KEY"]
+whisper_apiversion = os.environ["WHISPER_API_VERSION"]
 whisper_model_name = os.environ["WHISPER_DEPLOYMENT_NAME"]
 # Create AOAI client for whisper
 whisper_client = AzureOpenAI(
-    api_version='2024-02-01',
+    api_version=whisper_apiversion,
     azure_endpoint=whisper_endpoint,
     api_key=whisper_apikey
 )
@@ -121,7 +124,6 @@ def process_audio(video_path):
 
 # Function to analyze the video with GPT-4o
 def analyze_video(base64frames, system_prompt, user_prompt, transcription, temperature):
-
     print(f'SYSTEM PROMPT: [{system_prompt}]')
     print(f'USER PROMPT:   [{user_prompt}]')
 
@@ -131,13 +133,13 @@ def analyze_video(base64frames, system_prompt, user_prompt, transcription, tempe
                 model=aoai_model_name,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}, #"These are the frames from the video.",},
+                    {"role": "user", "content": user_prompt},
                     {"role": "user", "content": [
                         *map(lambda x: {"type": "image_url", "image_url": {"url": f'data:image/jpg;base64,{x}', "detail": "auto"}}, base64frames),
-                        {"type": "text", "text": f"The audio transcription is: {transcription.text}"}
+                        {"type": "text", "text": f"The audio transcription is: {transcription if isinstance(transcription, str) else transcription.text}"}
                     ]}
                 ],
-                temperature=temperature, #0.5,
+                temperature=temperature,
                 max_tokens=4096
             )
         else: # Without the audio transcription
@@ -145,7 +147,7 @@ def analyze_video(base64frames, system_prompt, user_prompt, transcription, tempe
                 model=aoai_model_name,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}, #"These are the frames from the video.",},
+                    {"role": "user", "content": user_prompt},
                     {"role": "user", "content": [
                         *map(lambda x: {"type": "image_url", "image_url": {"url": f'data:image/jpg;base64,{x}', "detail": "auto"}}, base64frames),
                     ]}
@@ -155,7 +157,6 @@ def analyze_video(base64frames, system_prompt, user_prompt, transcription, tempe
             )
 
         json_response = json.loads(response.model_dump_json())
-        #print(f'RESPONSE: [{response.model_dump_json(indent=2)}]')
         response = json_response['choices'][0]['message']['content']
 
     except Exception as ex:
@@ -189,41 +190,41 @@ def execute_video_processing(st, segment_path, system_prompt, user_prompt, tempe
     with st.spinner(f"Analyzing video segment: {segment_path}"):
         # Extract 1 frame per second. Adjust the `seconds_per_frame` parameter to change the sampling rate
         with st.spinner(f"Extracting frames..."):
-            inicio = time.time()
+            start_time = time.time()
             if save_frames:
                 output_dir = 'frames'
             else:
                 output_dir = ''
             base64frames = process_video(segment_path, seconds_per_frame=seconds_per_frame, resize=resize, output_dir=output_dir, temperature=temperature)
-            fin = time.time()
-            print(f'\t>>>> Frames extraction took {(fin - inicio):.3f} seconds <<<<')
-            ### st.write(f'Extracted {len(base64frames)} frames in {(fin - inicio):.3f} seconds')
+            end_time = time.time()
+            print(f'\t>>>> Frames extraction took {(end_time - start_time):.3f} seconds <<<<')
+            ### st.write(f'Extracted {len(base64frames)} frames in {(end_time - start_time):.3f} seconds')
 
         # Extract the transcription of the audio
         if audio_transcription:
             msg = f'Analyzing frames and audio with {aoai_model_name}...'
             with st.spinner(f"Transcribing audio from video file..."):
-                inicio = time.time()
+                start_time = time.time()
                 transcription = process_audio(segment_path)
-                fin = time.time()
-            ### st.write(f'Transcription finished in {(fin - inicio):.3f} seconds')
+                end_time = time.time()
+            ### st.write(f'Transcription finished in {(end_time - start_time):.3f} seconds')
             print(f'Transcription: [{transcription}]')
             if show_transcription:
                 st.markdown(f"**Transcription**: {transcription}", unsafe_allow_html=True)
-            print(f'\t>>>> Audio transcription took {(fin - inicio):.3f} seconds <<<<')
+            print(f'\t>>>> Audio transcription took {(end_time - start_time):.3f} seconds <<<<')
         else:
             msg = f'Analyzing frames with {aoai_model_name}...'
             transcription = ''
         # Analyze the video frames and the audio transcription with GPT-4o
         with st.spinner(msg):
-            inicio = time.time()
+            start_time = time.time()
             analysis = analyze_video(base64frames, system_prompt, user_prompt, transcription, temperature)
-            fin = time.time()
-        print(f'\t>>>> Analysys with {aoai_model_name} took {(fin - inicio):.3f} seconds <<<<')
+            end_time = time.time()
+        print(f'\t>>>> Analysis with {aoai_model_name} took {(end_time - start_time):.3f} seconds <<<<')
 
-    ### st.write(f"**Analysis of segment {segment_path}** ({(fin - inicio):.3f} seconds)")
-    fin = time.time()
-    print(f'\t>>>> {(fin - inicio):.6f} segundos <<<<')
+    ### st.write(f"**Analysis of segment {segment_path}** ({(end_time - start_time):.3f} seconds)")
+    end_time = time.time()
+    print(f'\t>>>> {(end_time - start_time):.6f} seconds <<<<')
     st.success("Analysis completed.")
 
     return analysis
@@ -242,11 +243,11 @@ with st.sidebar:
     # file_or_url = "File"
     initial_split = 0
     if file_or_url == "URL":
-        continuous_transmision = st.checkbox('Continuous transmision', False, help="Video of a continuous transmision")
+        continuous_transmision = st.checkbox('Continuous transmission', False, help="Video of a continuous transmission")
         if continuous_transmision:
             initial_split = SEGMENT_DURATION
         
-    audio_transcription = st.checkbox('Transcript audio', True, help="Extract the audio transcription and use in the analysis or not")
+    audio_transcription = st.checkbox('Transcribe audio', True, help="Extract the audio transcription and use in the analysis or not")
     if audio_transcription:
         show_transcription = st.checkbox('Show audio transcription', True, help="Present the audio transcription or not")
     seconds_split = st.number_input('Number of seconds to split the video', initial_split, help="The video will be processed in smaller segments based on the number of seconds specified in this field. (0 to not split)")
@@ -254,18 +255,22 @@ with st.sidebar:
     resize = st.number_input("Frames resizing ratio", 0, help="The size of the images will be reduced in proportion to this number while maintaining the height/width ratio. This reduction is useful for improving latency and reducing token consumption (0 to not resize)")
     save_frames = st.checkbox('Save the frames to the folder "frames"', False)
     temperature = float(st.number_input('Temperature for the model', DEFAULT_TEMPERATURE))
-    system_prompt = st.text_area('System Prompt', SYSTEM_PROMPT)
+    system_prompt = st.text_area('System Prompt', system_prompt)
     user_prompt = st.text_area('User Prompt', USER_PROMPT)
 
 # Prepare the segment directory
 output_dir = "segments"
 os.makedirs(output_dir, exist_ok=True)
 
+# Prepare the video directory
+video_dir = "video"
+os.makedirs(video_dir, exist_ok=True)
+
 # Video file or Video URL
 if file_or_url == 'File':
     video_file = st.file_uploader("Upload a video file", type=["mp4", "avi", "mov"])
 else:
-    url = st.text_area("Enter de url:", value='https://www.youtube.com/watch?v=Y6kHpAeIr4c', height=10)
+    url = st.text_area("Enter the URL:", value='https://www.youtube.com/watch?v=Y6kHpAeIr4c', height=10)
 
 # Analyze the video when the button is pressed
 if st.button("Analyze video", use_container_width=True, type='primary'):
@@ -276,42 +281,44 @@ if st.button("Analyze video", use_container_width=True, type='primary'):
     print(f"seconds_per_frame: {seconds_per_frame}, resize ratio: {resize}, save_frames: {save_frames}, temperature: {temperature}")
 
     if file_or_url == 'URL': # Process Youtube video
-        st.write(f'Analyzing video from url {url}...')
+        st.write(f'Analyzing video from URL {url}...')
         
         ydl_opts = {
-                #'format': 'best',
                 'format': '(bestvideo[vcodec^=av01]/bestvideo[vcodec^=vp9]/bestvideo)+bestaudio/best',
-                'outtmpl': 'segment_%(start)s.mp4',
+                'outtmpl': os.path.join(video_dir, 'full_video.%(ext)s'),
                 'force_keyframes_at_cuts': True,
         }
         ydl = yt_dlp.YoutubeDL(ydl_opts)
         if continuous_transmision == False:
             info_dict = ydl.extract_info(url, download=False)
-            video_duration = info_dict.get('duration', 0)
+            video_duration = int(info_dict.get('duration', 0))  # Convert to int
 
             if seconds_split == 0:
-                duracion_segmento=video_duration
+                segment_duration = video_duration
             else:
-                duracion_segmento=seconds_split #SEGMENT_DURATION
+                segment_duration = int(seconds_split)  # Convert to int
         else:
-            video_duration = 48*60*60
-        
+            video_duration = int(48 * 60 * 60)  # Convert to int
+
             if seconds_split == 0:
-                duracion_segmento=180 # 3 minutes
+                segment_duration = 180  # 3 minutes
             else:
-                duracion_segmento=seconds_split #SEGMENT_DURATION
-        
-        for start in range(0, video_duration, duracion_segmento):
-            end = start + duracion_segmento
+                segment_duration = int(seconds_split)  # Convert to int
+
+        for start in range(0, video_duration, segment_duration):
+            end = start + segment_duration
             filename = f'segments/segment_{start}-{end}.mp4'
             with st.spinner(f"Downloading video from second {start} to {end}..."):
-                ydl_opts['outtmpl']['default'] = filename
-                ydl_opts['download_ranges'] = download_range_func(None, [(start, end)])
+                ydl_opts['outtmpl'] = filename
+                ydl_opts['download_ranges'] = [(start, end)]
 
-                print(f'start: {start}, video_duration: {video_duration}, duracion_segmento: {duracion_segmento}')
+                print(f'Updated ydl_opts: {ydl_opts}')
+                print(f'start: {start}, video_duration: {video_duration}, segment_duration: {segment_duration}')
                 try:
                     ydl.download([url])
-                except:
+                    print(f"Downloaded segment: {filename}")
+                except Exception as e:
+                    print(f"Error downloading segment: {e}")
                     break
 
             if os.path.exists(filename): # ext .mp4
@@ -329,29 +336,33 @@ if st.button("Analyze video", use_container_width=True, type='primary'):
             #st.write(f"{analysis}")
 
             # Example detecting an event
-            event="guitarra eléctrica"
+            event="electric guitar"
             if event in analysis:
                 st.write(f'**Detected event "{event}" in segment {segment_path}**')
             
             # Delete the video segment
             os.remove(segment_path)
+            print(f"Deleted segment: {segment_path}")
 
-    else: # Process the fideo file
+    else: # Process the video file
         if video_file is not None:
             video_path = os.path.join("temp", video_file.name)
-        try:
-            with open(video_path, "wb") as f:
-                f.write(video_file.getbuffer())
+            try:
+                with open(video_path, "wb") as f:
+                    f.write(video_file.getbuffer())
+                print(f"Uploaded video file: {video_path}")
 
-            # Splitting video in segment of N seconds (if seconds is 0 t will not split the video)
-            for segment_path in split_video(video_path, output_dir, seconds_split):
-                # Process the video segment
-                analysis = execute_video_processing(st, segment_path, system_prompt, user_prompt, temperature)
-                st.write(f"{analysis}")
+                # Splitting video in segment of N seconds (if seconds is 0 it will not split the video)
+                for segment_path in split_video(video_path, output_dir, seconds_split):
+                    print(f"Processing segment: {segment_path}")
+                    # Process the video segment
+                    analysis = execute_video_processing(st, segment_path, system_prompt, user_prompt, temperature)
+                    st.write(f"{analysis}")
 
-                # Delete the video segment
-                os.remove(segment_path)
+                    # Delete the video segment
+                    os.remove(segment_path)
+                    print(f"Deleted segment: {segment_path}")
 
-        except Exception as ex:
-            print(f'ERROR: {ex}')
-            st.write(f'ERROR: {ex}')
+            except Exception as ex:
+                print(f'ERROR: {ex}')
+                st.write(f'ERROR: {ex}')
