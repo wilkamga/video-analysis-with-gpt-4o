@@ -18,7 +18,7 @@ SYSTEM_PROMPT = "You are a helpful assistant that describes in detail a video. R
 USER_PROMPT = "These are the frames from the video."
 DEFAULT_TEMPERATURE = 0.5
 RESIZE_OF_FRAMES = 2
-SECONDS_PER_FRAME = 1
+SECONDS_PER_FRAME = 30
 
 # Load configuration
 load_dotenv(override=True)
@@ -128,7 +128,7 @@ def analyze_video(base64frames, system_prompt, user_prompt, transcription, tempe
     print(f'USER PROMPT:   [{user_prompt}]')
 
     try:
-        if transcription != '': # Include the audio transcription
+        if transcription: # Include the audio transcription
             response = aoai_client.chat.completions.create(
                 model=aoai_model_name,
                 messages=[
@@ -285,7 +285,8 @@ if st.button("Analyze video", use_container_width=True, type='primary'):
         
         ydl_opts = {
                 'format': '(bestvideo[vcodec^=av01]/bestvideo[vcodec^=vp9]/bestvideo)+bestaudio/best',
-                'outtmpl': os.path.join(video_dir, 'full_video.%(ext)s'),
+                # 'outtmpl': os.path.join(video_dir, 'full_video.%(ext)s'),
+                'outtmpl': 'segment_%(start)s.mp4',
                 'force_keyframes_at_cuts': True,
         }
         ydl = yt_dlp.YoutubeDL(ydl_opts)
@@ -309,8 +310,10 @@ if st.button("Analyze video", use_container_width=True, type='primary'):
             end = start + segment_duration
             filename = f'segments/segment_{start}-{end}.mp4'
             with st.spinner(f"Downloading video from second {start} to {end}..."):
-                ydl_opts['outtmpl'] = filename
-                ydl_opts['download_ranges'] = [(start, end)]
+                # ydl_opts['outtmpl'] = filename
+                # ydl_opts['download_ranges'] = [(start, end)]
+                ydl_opts['outtmpl']['default'] = filename
+                ydl_opts['download_ranges'] = download_range_func(None, [(start, end)])
 
                 print(f'Updated ydl_opts: {ydl_opts}')
                 print(f'start: {start}, video_duration: {video_duration}, segment_duration: {segment_duration}')
@@ -346,23 +349,24 @@ if st.button("Analyze video", use_container_width=True, type='primary'):
 
     else: # Process the video file
         if video_file is not None:
+            os.makedirs("temp", exist_ok=True)
             video_path = os.path.join("temp", video_file.name)
-            try:
-                with open(video_path, "wb") as f:
-                    f.write(video_file.getbuffer())
-                print(f"Uploaded video file: {video_path}")
+        try:
+            with open(video_path, "wb") as f:
+                f.write(video_file.getbuffer())
+            print(f"Uploaded video file: {video_path}")
 
-                # Splitting video in segment of N seconds (if seconds is 0 it will not split the video)
-                for segment_path in split_video(video_path, output_dir, seconds_split):
-                    print(f"Processing segment: {segment_path}")
-                    # Process the video segment
-                    analysis = execute_video_processing(st, segment_path, system_prompt, user_prompt, temperature)
-                    st.write(f"{analysis}")
+            # Splitting video in segment of N seconds (if seconds is 0 it will not split the video)
+            for segment_path in split_video(video_path, output_dir, seconds_split):
+                print(f"Processing segment: {segment_path}")
+                # Process the video segment
+                analysis = execute_video_processing(st, segment_path, system_prompt, user_prompt, temperature)
+                st.write(f"{analysis}")
 
-                    # Delete the video segment
-                    os.remove(segment_path)
-                    print(f"Deleted segment: {segment_path}")
+                # Delete the video segment
+                os.remove(segment_path)
+                print(f"Deleted segment: {segment_path}")
 
-            except Exception as ex:
-                print(f'ERROR: {ex}')
-                st.write(f'ERROR: {ex}')
+        except Exception as ex:
+            print(f'ERROR: {ex}')
+            st.write(f'ERROR: {ex}')
