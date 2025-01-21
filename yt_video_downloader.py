@@ -2,6 +2,7 @@ import os
 import yt_dlp
 from yt_dlp.utils import download_range_func
 from moviepy.editor import VideoFileClip
+import time
 
 def convert_to_mp4(input_path, output_path, target_size_mb=200):
     # Load the video file
@@ -38,7 +39,6 @@ def main():
 
     # Download options
     ydl_opts = {
-        # 'format': 'bestvideo+bestaudio/best',
         'format': '(bestvideo[vcodec^=av01]/bestvideo[vcodec^=vp9]/bestvideo)+bestaudio/best',
         'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
         'noplaylist': True,
@@ -47,9 +47,13 @@ def main():
 
     # Download video
     print("Downloading video segment...")
+    start_time_download = time.time()
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         downloaded_video = ydl.prepare_filename(info)  # Full path to downloaded video
+    end_time_download = time.time()
+    download_duration = end_time_download - start_time_download
+    print(f"Download completed in {download_duration:.2f} seconds")
 
     # Extract the title from the info dictionary
     title = info.get('title', 'segment')
@@ -58,7 +62,11 @@ def main():
     segment_output = os.path.join(output_dir, f"{title}_segment_{start_time}-{end_time}.mp4")
     
     # Convert to MP4 and ensure the file is under 200 MB
+    start_time_conversion = time.time()
     convert_to_mp4(downloaded_video, segment_output, target_size_mb=200)
+    end_time_conversion = time.time()
+    conversion_duration = end_time_conversion - start_time_conversion
+    print(f"Conversion completed in {conversion_duration:.2f} seconds")
     
     # # Remove the original downloaded file
     # os.remove(downloaded_video)
