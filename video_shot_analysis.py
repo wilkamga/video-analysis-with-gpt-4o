@@ -13,12 +13,12 @@ import yt_dlp
 from yt_dlp.utils import download_range_func
 
 # Default configuration
-DEFAULT_SHOT_INTERVAL = 60  # In seconds
+DEFAULT_SHOT_INTERVAL = 30  # In seconds
 DEFAULT_FRAMES_PER_SECOND = 1
 SYSTEM_PROMPT = "You are a helpful assistant that describes in detail a video. Respond in the same language as the transcription."
 USER_PROMPT = "These are the frames from the video."
 DEFAULT_TEMPERATURE = 0.5
-RESIZE_OF_FRAMES = 2
+RESIZE_OF_FRAMES = 4  # Changed default resize ratio to 4
 
 # Load configuration
 load_dotenv(override=True)
@@ -29,7 +29,7 @@ aoai_apikey = os.environ["AZURE_OPENAI_API_KEY"]
 aoai_apiversion = os.environ["AZURE_OPENAI_API_VERSION"]
 aoai_model_name = os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"]
 system_prompt = os.environ.get("SYSTEM_PROMPT", "You are an expert on Video Analysis. You will be shown a series of images from a video. Describe what is happening in the video, including the objects, actions, and any other relevant details. Be as specific and detailed as possible.")
-print(f'aoai_endpoint: {aoai_endpoint}, aoai_model_name: {aoai_model_name}')
+# print(f'aoai_endpoint: {aoai_endpoint}, aoai_model_name: {aoai_model_name}')
 # Create AOAI client for answer generation
 aoai_client = AzureOpenAI(
     azure_deployment=aoai_model_name,
@@ -52,6 +52,7 @@ whisper_client = AzureOpenAI(
 
 # Function to encode a local video into frames
 def process_video(video_path, frames_per_second=DEFAULT_FRAMES_PER_SECOND, resize=RESIZE_OF_FRAMES, output_dir='', temperature=DEFAULT_TEMPERATURE):
+    print(f"Starting video processing for {video_path} with frames_per_second={frames_per_second}, resize={resize}")
     base64Frames = []
 
     # Prepare the video analysis
@@ -73,6 +74,8 @@ def process_video(video_path, frames_per_second=DEFAULT_FRAMES_PER_SECOND, resiz
         if not success:
             break
 
+        print(f"Processing frame {curr_frame}/{total_frames}")
+
         # Resize the frame if required
         if resize != 0:
             height, width, _ = frame.shape
@@ -90,12 +93,13 @@ def process_video(video_path, frames_per_second=DEFAULT_FRAMES_PER_SECOND, resiz
         base64Frames.append(base64.b64encode(buffer).decode("utf-8"))
         curr_frame += frames_to_skip
     video.release()
-    print(f"Extracted {len(base64Frames)} frames")
+    print(f"Extracted {len(base64Frames)} frames from {video_path}")
 
     return base64Frames
 
 # Function to transcript the audio from the local video with Whisper
 def process_audio(video_path):
+    print(f"Starting audio transcription for {video_path}")
     transcription_text = ''
     try:
         base_video_path, _ = os.path.splitext(video_path)
@@ -107,6 +111,7 @@ def process_audio(video_path):
         print(f"Extracted audio to {audio_path}")
 
         # Transcribe the audio
+        print(f"Transcribing audio from {audio_path}")
         transcription = whisper_client.audio.transcriptions.create(
             model=whisper_model_name,
             file=open(audio_path, "rb"),
@@ -121,8 +126,10 @@ def process_audio(video_path):
 
 # Function to analyze the video with GPT-4o
 def analyze_video(base64frames, system_prompt, user_prompt, transcription, temperature):
-    print(f'SYSTEM PROMPT: [{system_prompt}]')
-    print(f'USER PROMPT:   [{user_prompt}]')
+    print(f"Starting video analysis with system_prompt={system_prompt} and user_prompt={user_prompt}")
+    print(f"Number of frames to analyze: {len(base64frames)}")
+    if transcription:
+        print(f"Including audio transcription in the analysis")
 
     try:
         if transcription: # Include the audio transcription
@@ -155,6 +162,7 @@ def analyze_video(base64frames, system_prompt, user_prompt, transcription, tempe
 
         json_response = json.loads(response.model_dump_json())
         response = json_response['choices'][0]['message']['content']
+        print("Analysis completed successfully")
 
     except Exception as ex:
         print(f'ERROR: {ex}')
@@ -164,22 +172,25 @@ def analyze_video(base64frames, system_prompt, user_prompt, transcription, tempe
 
 # Split the video into shots of N seconds
 def split_video(video_path, output_dir, shot_interval=DEFAULT_SHOT_INTERVAL, max_duration=None):
+    print(f"Starting video splitting for {video_path} with shot_interval={shot_interval}, max_duration={max_duration}")
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = total_frames / fps
 
-    if max_duration is not None:
+    if max_duration is not None and max_duration > 0:
         duration = min(duration, max_duration)
 
     for start_time in range(0, int(duration), shot_interval):
         end_time = min(start_time + shot_interval, duration)
         output_file = os.path.join(output_dir, f'{os.path.splitext(os.path.basename(video_path))[0]}_shot_{start_time}-{end_time}_secs.mp4')
+        print(f"Extracting shot from {start_time} to {end_time} into {output_file}")
         ffmpeg_extract_subclip(video_path, start_time, end_time, targetname=output_file)
         yield output_file
 
 # Process the video
 def execute_video_processing(st, shot_path, system_prompt, user_prompt, temperature, frames_per_second, analysis_dir):
+    print(f"Starting video processing for shot {shot_path}")
     # Show the video on the screen
     st.write(f"Video: {shot_path}:")
     st.video(shot_path)
@@ -192,12 +203,14 @@ def execute_video_processing(st, shot_path, system_prompt, user_prompt, temperat
                 output_dir = os.path.join(analysis_dir, 'frames')
             else:
                 output_dir = ''
+            print(f"Extracting frames from {shot_path}")
             base64frames = process_video(shot_path, frames_per_second=frames_per_second, resize=resize, output_dir=output_dir, temperature=temperature)
             end_time = time.time()
             print(f'\t>>>> Frames extraction took {(end_time - start_time):.3f} seconds <<<<')
 
         # Extract the transcription of the audio
         if audio_transcription:
+            print(f"Transcribing audio from {shot_path}")
             msg = f'Analyzing frames and audio with {aoai_model_name}...'
             with st.spinner(f"Transcribing audio from video file..."):
                 start_time = time.time()
@@ -208,16 +221,22 @@ def execute_video_processing(st, shot_path, system_prompt, user_prompt, temperat
                 st.markdown(f"**Transcription**: {transcription}", unsafe_allow_html=True)
             print(f'\t>>>> Audio transcription took {(end_time - start_time):.3f} seconds <<<<')
         else:
+            print(f"Skipping audio transcription")
             msg = f'Analyzing frames with {aoai_model_name}...'
             transcription = ''
         # Analyze the video frames and the audio transcription with GPT-4o
         with st.spinner(msg):
+            print(f"Analyzing frames with {aoai_model_name}")
             start_time = time.time()
             analysis = analyze_video(base64frames, system_prompt, user_prompt, transcription, temperature)
             end_time = time.time()
         print(f'\t>>>> Analysis with {aoai_model_name} took {(end_time - start_time):.3f} seconds <<<<')
 
     st.success("Analysis completed.")
+    print(f"Analysis completed for shot {shot_path}")
+    
+    # Print the analysis content
+    print(f"Analysis content: {analysis}")
     
     # Save the analysis to a JSON file in the analysis directory
     analysis_filename = os.path.join(analysis_dir, os.path.splitext(os.path.basename(shot_path))[0] + "_analysis.json")
@@ -239,18 +258,19 @@ st.title('Video Shot Analysis with GPT-4o')
 with st.sidebar:
     file_or_url = st.selectbox("Video source:", ["File", "URL"], index=0, help="Select the source, file or url")
     initial_split = 0
+
     if file_or_url == "URL":
         continuous_transmission = st.checkbox('Continuous transmission', False, help="Video of a continuous transmission")
         if continuous_transmission:
-            initial_split = SEGMENT_DURATION
+            initial_split = DEFAULT_SHOT_INTERVAL
         
     audio_transcription = st.checkbox('Transcribe audio', True, help="Extract the audio transcription and use in the analysis or not")
     if audio_transcription:
         show_transcription = st.checkbox('Show audio transcription', True, help="Present the audio transcription or not")
-    shot_interval = st.number_input('Shot interval in seconds', DEFAULT_SHOT_INTERVAL, help="The video will be processed in shots based on the number of seconds specified in this field.")
+    shot_interval = st.number_input(label='Shot interval in seconds', min_value=0, value=DEFAULT_SHOT_INTERVAL, help="The video will be processed in shots based on the number of seconds specified in this field.")
     frames_per_second = st.number_input('Frames per second', DEFAULT_FRAMES_PER_SECOND, help="The number of frames to extract per second.")
-    resize = st.number_input("Frames resizing ratio", 0, help="The size of the images will be reduced in proportion to this number while maintaining the height/width ratio. This reduction is useful for improving latency and reducing token consumption (0 to not resize)")
-    save_frames = st.checkbox('Save the frames to the folder "frames"', False)
+    resize = st.number_input("Frames resizing ratio", min_value=0, value=RESIZE_OF_FRAMES, help="The size of the images will be reduced in proportion to this number while maintaining the height/width ratio. This reduction is useful for improving latency and reducing token consumption (0 to not resize)")
+    save_frames = st.checkbox('Save the frames to the folder "frames"', True)
     temperature = float(st.number_input('Temperature for the model', DEFAULT_TEMPERATURE))
     system_prompt = st.text_area('System Prompt', system_prompt)
     user_prompt = st.text_area('User Prompt', USER_PROMPT)
@@ -303,6 +323,8 @@ if st.button("Analyze video", use_container_width=True, type='primary'):
 
         if max_duration > 0:
             video_duration = min(video_duration, max_duration)
+        else:
+            video_duration = int(info_dict.get('duration', 0))  # Convert to int
 
         if shot_interval == 0:
             segment_duration = video_duration
@@ -349,7 +371,7 @@ if st.button("Analyze video", use_container_width=True, type='primary'):
                     print(f"Processing shot: {shot_path}")
                     # Process the video shot
                     analysis = execute_video_processing(st, shot_path, system_prompt, user_prompt, temperature, frames_per_second, analysis_subdir)
-                    st.write(f"{analysis}")
+                    st.markdown(f"**Description**: {analysis}", unsafe_allow_html=True)
 
             except Exception as ex:
                 print(f'ERROR: {ex}')
