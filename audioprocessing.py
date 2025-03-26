@@ -3,11 +3,12 @@ from azure.cognitiveservices.speech import SpeechConfig, SpeechRecognizer, Audio
 from azure.cognitiveservices.speech.audio import AudioOutputConfig, AudioConfig
 import requests
 import json
+import os
 
 # Azure multi-service credentials
-azure_key = "9536980eef2f421cae8a3520f49345f5"
-service_region = "eastus"
-azure_endpoint = "https://testaoaiservice.cognitiveservices.azure.com/"
+azure_key = os.environ["AZURE_AI_KEY"]
+service_region = os.environ["AZURE_AI_REGION"]
+azure_endpoint = os.environ["AZURE_AI_ENDPOINT"]
 
 # Streamlit app
 st.title("Audio Translation App")
